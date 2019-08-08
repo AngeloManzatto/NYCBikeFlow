@@ -11,6 +11,9 @@ Article: https://arxiv.org/pdf/1610.00081.pdf
 References and credits:
 Junbo Zhang, Yu Zheng, Dekang Qi. Deep Spatio-Temporal Residual Networks for Citywide Crowd Flows Prediction. In AAAI 2017.
 
+The dataset can be download checking the information on the following link:
+https://github.com/lucktroy/DeepST/tree/master/data/BikeNYC
+
 """
 
 ##################################################################################
@@ -27,7 +30,7 @@ import h5py
 
 import matplotlib.pyplot as plt
 import matplotlib.cm 
-from matplotlib.colors import LinearSegmentedColormap 
+
 import seaborn as sns
 sns.set()
 
@@ -190,7 +193,7 @@ for i, ts in enumerate(formated_timestamps):
     ts_dict[converted_time] = i
 
 # Create X, y data    
-X_Closeness, X_Period, X_Trend, X_external, Y , Y_timestamp = [],[],[],[],[],[]
+X_Closeness, X_Period, X_Trend, X_External, Y , Y_timestamp = [],[],[],[],[],[]
 
 # Crete the datasets for closeness, period and trend
 # Since we have future predictions as output we need to build the dataset based on the lates trend period as starting point
@@ -249,7 +252,7 @@ for i in range(starting_period, len(formated_timestamps)):
     X_Closeness.append(xc)
     X_Period.append(xp)
     X_Trend.append(xt)
-    X_external.append(one_hot_day_week(formated_timestamps[i]))
+    X_External.append(one_hot_day_week(formated_timestamps[i]))
     
     Y.append(y)
     Y_timestamp.append(formated_timestamps[i])
@@ -257,13 +260,13 @@ for i in range(starting_period, len(formated_timestamps)):
 X_Closeness = np.asarray(X_Closeness)
 X_Period = np.asarray(X_Period)
 X_Trend = np.asarray(X_Trend)
-X_external = np.asarray(X_external)
+X_External = np.asarray(X_External)
 Y = np.asarray(Y)
 
 print("X_Closeness shape: ", X_Closeness.shape)
 print("X_Period shape: ", X_Period.shape)
 print("X_Trend shape: ", X_Trend.shape)
-print("X_External shape: ", X_external.shape)
+print("X_External shape: ", X_External.shape)
 print( "Y shape:", Y.shape)
 
 ############################################################################################
@@ -274,8 +277,8 @@ days_test = 10
 n_test = 24 * days_test
 
 # Split dataset into training / test sets
-XC_train, XP_train, XT_train,XE_train, Y_train = X_Closeness[:-n_test], X_Period[:-n_test], X_Trend[:-n_test],X_external[:-n_test], Y[:-n_test]
-XC_test, XP_test, XT_test, XE_test, Y_test = X_Closeness[-n_test:], X_Period[-n_test:], X_Trend[-n_test:],X_external[-n_test:], Y[-n_test:]
+XC_train, XP_train, XT_train,XE_train, Y_train = X_Closeness[:-n_test], X_Period[:-n_test], X_Trend[:-n_test],X_External[:-n_test], Y[:-n_test]
+XC_test, XP_test, XT_test, XE_test, Y_test = X_Closeness[-n_test:], X_Period[-n_test:], X_Trend[-n_test:],X_External[-n_test:], Y[-n_test:]
     
 # Time stamp split so we can track the period
 timestamp_train, timestamp_test = Y_timestamp[:-n_test], Y_timestamp[-n_test:]
