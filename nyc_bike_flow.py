@@ -20,6 +20,7 @@ https://github.com/lucktroy/DeepST/tree/master/data/BikeNYC
 # Libraries
 ##################################################################################  
 import os
+import math
 
 from datetime import datetime
 from datetime import timedelta  
@@ -70,24 +71,24 @@ timestamps = f['date'][()]
 data = np.transpose(data, (0, 2, 3, 1))
 
 # Plot some samples from dataset
-n_samples = 5
+n_samples = 1
 
 for i in range(n_samples):
     
     # define the size of images
     f, (ax1, ax2) = plt.subplots(1, 2)
-    f.set_figwidth(10)
-    f.set_figheight(6)
+    f.set_figwidth(12)
+    f.set_figheight(8)
     # randomly select a sample
     idx = np.random.randint(0, len(data))
     inflow = data[idx][:,:,0] #input flow is the first matrix
     outflow = data[idx][:,:,1] #output flow is the second matrix
     
-    hmax1 = sns.heatmap(inflow, cmap = matplotlib.cm.winter, alpha = 0.3, annot = True,zorder = 2, ax=ax1)
+    hmax1 = sns.heatmap(inflow, cmap = matplotlib.cm.winter, alpha = 0.3, annot = False,zorder = 2, ax=ax1)
     hmax1.imshow(nyc_map,aspect = hmax1.get_aspect(),extent = hmax1.get_xlim() + hmax1.get_ylim(), zorder = 1) 
     ax1.set_title('In Flow: {0}'.format(timestamps[idx].decode("utf-8")))
    
-    hmax2 = sns.heatmap(outflow, cmap = matplotlib.cm.winter, alpha = 0.3, annot = True,zorder = 2, ax=ax2)
+    hmax2 = sns.heatmap(outflow, cmap = matplotlib.cm.winter, alpha = 0.3, annot = False,zorder = 2, ax=ax2)
     hmax2.imshow(nyc_map,aspect = hmax2.get_aspect(),extent = hmax2.get_xlim() + hmax2.get_ylim(), zorder = 1) 
     ax2.set_title('Out Flow: {0}'.format(timestamps[idx].decode("utf-8")))
 
@@ -202,8 +203,6 @@ starting_period = trend_interval * trend_len
 # We construct the X, y datasets based on a reversed time interval, from the latest trend to starting closeness
 for i in range(starting_period, len(formated_timestamps)):
     
-    print(i, formated_timestamps[i])
-
     # Starting period
     date = str_to_date(formated_timestamps[i])
     
@@ -437,6 +436,7 @@ history = model.fit(X_train, Y_train,
 ############################################################################################
 # Predict
 ############################################################################################
+
 # If we want to test on a pre trained model use the following line
 model.load_weights(os.path.join(model_path,'bikenyc-0.0016.h5'), by_name=False)
 
@@ -475,12 +475,25 @@ for i in range(n_samples):
     hmax4.imshow(nyc_map,aspect = hmax4.get_aspect(),extent = hmax4.get_xlim() + hmax4.get_ylim(), zorder = 1) 
     ax4.set_title('Pred Out Flow: {0}'.format(timestamps[idx].decode("utf-8")))
     
-   
+############################################################################################
+# Evaluate
+############################################################################################   
 
+# This information was provided in the original article an file !
+'''    
+For NYC Bike data, there are 81 available grid-based areas, each of
+which includes at least ONE bike station. Therefore, we modify the final
+RMSE by multiplying the following factor (i.e., factor).
+'''
+nb_area = 81
+m_factor = math.sqrt(1. * map_height * map_width / nb_area)
 
+score = model.evaluate(X_train, Y_train, batch_size=Y_train.shape[0] // 48, verbose=0)
+print('Train score: %.6f rmse (norm): %.6f rmse (real): %.6f' %
+      (score[0], score[1], score[1] * (max_value - min_value) / 2. * m_factor))
 
-
-
-
+score = model.evaluate(X_test, Y_test, batch_size=Y_test.shape[0], verbose=0)
+print('Test score: %.6f rmse (norm): %.6f rmse (real): %.6f' %
+      (score[0], score[1], score[1] * (max_value - min_value) / 2. * m_factor))
 
     
