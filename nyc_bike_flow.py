@@ -71,7 +71,7 @@ timestamps = f['date'][()]
 data = np.transpose(data, (0, 2, 3, 1))
 
 # Plot some samples from dataset
-n_samples = 1
+n_samples = 5
 
 for i in range(n_samples):
     
@@ -145,7 +145,7 @@ inflow / outflow matrices meaning that we should avoid missing hours.
 # Simple function that receives a string in format YmdH and convert to a datetime object
 def str_to_date(timestamp):
     
-    # We can't direct stripe the data using datetime.datetime.strptime(ts, '%Y%m%d%H')
+    # We can't direct stripe the data using datetime.strptime(ts, '%Y%m%d%H')
     # because the hours are in 01 to 24 format instead of 00 to 23
     year, month, day, hour = int(timestamp[:4]), int(timestamp[4:6]), int(timestamp[6:8]), int(timestamp[8:])-1
     converted_time = datetime(year, month, day, hour)
@@ -155,7 +155,7 @@ def str_to_date(timestamp):
 # Convert timestamp to a one hot encoded vector taking into account week way and if it is weekend or not
 def one_hot_day_week(timestamp):
     
-    converted_time = str_to_date('2014081201')
+    converted_time = str_to_date(timestamp)
     i = converted_time.weekday()
 
     one_hot_encoded = np.zeros((8))
@@ -165,6 +165,8 @@ def one_hot_day_week(timestamp):
     
     # Weekend / Not Weekend encoder
     if i >= 5:
+        one_hot_encoded[7] = 0
+    else:
         one_hot_encoded[7] = 1
         
     return one_hot_encoded
@@ -219,11 +221,14 @@ for i in range(starting_period, len(formated_timestamps)):
         check_dates.append(date - timedelta(hours=t))
         
     # Check if all those selected dates exists in our timestamp dictionary and if not go to the next iteration
+    break_flag = False
     for check_date in check_dates:
         if check_date not in ts_dict:
-            print("Date frame missing!")
-            continue
-        
+            print("Date frame missing!: {0} ".format(formated_timestamps[i]))
+            break_flag = True
+    
+    if break_flag:
+        continue
     # Parse again to create de dataset stacking the time range for closeness, period and trend
     
     # X Closeness
