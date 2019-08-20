@@ -362,7 +362,6 @@ for conf, name in zip([c_conf, p_conf, t_conf],['c','p','t']):
     x = identity_block(x, 64, block_id='0_' + name)
     x = identity_block(x, 64, block_id='1_' + name)
     x = identity_block(x, 64, block_id='2_' + name)
-    x = identity_block(x, 64, block_id='3_' + name)
     
     x = Activation('relu')(x)        
     x = Conv2D(n_flows, kernel_size=(3,3), padding="same")(x)
@@ -443,7 +442,7 @@ history = model.fit(X_train, Y_train,
 ############################################################################################
 
 # If we want to test on a pre trained model use the following line
-model.load_weights(os.path.join(model_path,'bikenyc-0.0016.h5'), by_name=False)
+model.load_weights(os.path.join(model_path,'bikenyc-0.0020.h5'), by_name=False)
 
 n_samples = 3
 
