@@ -39,14 +39,16 @@ import keras.backend as K
 
 from keras.models import Model
 
-from keras.layers import Input, Dense, Reshape, Activation, Add
-from keras.layers import Conv2D , BatchNormalization 
+from keras.layers import Input, Dense, Reshape, Activation, Add, LeakyReLU
+from keras.layers import Conv2D , BatchNormalization, Lambda, concatenate
 
 from keras.callbacks import ModelCheckpoint, CSVLogger, EarlyStopping
 
 from keras.optimizers import Adam
 
 from keras.engine.topology import Layer
+
+np.random.seed(42) # My nickname Recruta42
 
 ############################################################################################
 # Load Dataset
@@ -84,13 +86,15 @@ for i in range(n_samples):
     inflow = data[idx][:,:,0] #input flow is the first matrix
     outflow = data[idx][:,:,1] #output flow is the second matrix
     
+    date = datetime.strptime(timestamps[idx].decode("utf-8"), '%Y%m%d%H')
+    
     hmax1 = sns.heatmap(inflow, cmap = matplotlib.cm.winter, alpha = 0.3, annot = False,zorder = 2, ax=ax1)
     hmax1.imshow(nyc_map,aspect = hmax1.get_aspect(),extent = hmax1.get_xlim() + hmax1.get_ylim(), zorder = 1) 
-    ax1.set_title('In Flow: {0}'.format(timestamps[idx].decode("utf-8")))
+    ax1.set_title('In Flow: {0}'.format(date))
    
     hmax2 = sns.heatmap(outflow, cmap = matplotlib.cm.winter, alpha = 0.3, annot = False,zorder = 2, ax=ax2)
     hmax2.imshow(nyc_map,aspect = hmax2.get_aspect(),extent = hmax2.get_xlim() + hmax2.get_ylim(), zorder = 1) 
-    ax2.set_title('Out Flow: {0}'.format(timestamps[idx].decode("utf-8")))
+    ax2.set_title('Out Flow: {0}'.format(date))
 
 ############################################################################################
 # Pre-Process Dataset
@@ -299,6 +303,89 @@ print("X Test size: ", len(X_test))
 ############################################################################################
 
 ############################################################################################
+# ResNet Identity block
+############################################################################################
+def identity_block(inputs, filters, block_id):
+    
+    x = BatchNormalization(name='block_' + block_id + '_identity_batch_1')(inputs)
+    x = Activation('relu', name='block_' + block_id + '_identity_relu_1')(x)
+    x = Conv2D(filters, kernel_size=(3,3), strides=(1,1), padding='same', kernel_initializer='he_normal', name='block_' + block_id + '_identity_conv2d_1')(x)
+
+    x = BatchNormalization(name='block_' + block_id + '_identity_batch_2')(x)
+    x = Activation('relu',name='block_' + block_id + '_identity_relu_2')(x)
+    x = Conv2D(filters, kernel_size=(3,3), strides=(1,1), padding='same', kernel_initializer='he_normal', name='block_' + block_id + '_identity_conv2d_2')(x)
+    
+    x = Add(name='block_' + block_id + '_add')([inputs,x])
+
+    return x
+
+############################################################################################
+# ResNet bottleNeck block
+############################################################################################
+def bottleneck_block(inputs,kernel_size, filters, block_id):
+    
+    f1, f2, f3 = filters
+    
+    x = Conv2D(f1, kernel_size=(1,1), use_bias=False, kernel_initializer='he_normal', name='block_' + block_id + '_identity_conv2d_1')(inputs)
+    x = BatchNormalization(name='block_' + block_id + '_identity_batch_1')(x)
+    x = Activation('relu', name='block_' + block_id + '_identity_relu_1')(x)
+    
+    x = Conv2D(f2, kernel_size = kernel_size, padding='same', use_bias=False, kernel_initializer='he_normal', name='block_' + block_id + '_identity_conv2d_2')(x)
+    x = BatchNormalization(name='block_' + block_id + '_identity_batch_2')(x)
+    x = Activation('relu',name='block_' + block_id + '_identity_relu_2')(x)
+    
+    x = Conv2D(f3, kernel_size=(1,1), use_bias=False, kernel_initializer='he_normal', name='block_' + block_id + '_identity_conv2d_3')(x)
+    x = BatchNormalization(name='block_' + block_id + '_identity_batch_3')(x)
+    
+    x = Add(name='block_' + block_id + '_add')([x, inputs])
+    x = Activation('relu', name='block_' + block_id + '_identity_relu_3')(x)
+    
+    return x
+
+############################################################################################
+# ResNetXt group block
+############################################################################################
+def grouped_block(inputs, filters, cardinality, block_id):
+    
+    assert not filters % cardinality
+    
+    convolution_groups = []
+    
+    n_convs = filters // cardinality
+    
+    for j in range(cardinality):
+        
+        group = Lambda(lambda z: z[:, :, :, j * n_convs:j * n_convs + n_convs])(inputs)
+        convolution_groups.append(Conv2D(n_convs, kernel_size=(3, 3), strides=(1,1) , padding='same')(group))
+    
+    x = concatenate(convolution_groups, name='block_Xt' + block_id + '_concatenate')
+    
+    return x
+
+############################################################################################
+# ResNet bottleNeck block
+############################################################################################
+def resnetXt_block(inputs, filters, cardinality, block_id):
+    
+    f1, f2, f3 = filters
+    
+    x = Conv2D(f1, kernel_size=(1,1), use_bias=False, kernel_initializer='he_normal', name='block_' + block_id + '_xt_conv2d_1')(inputs)
+    x = BatchNormalization(name='block_' + block_id + '_xt_batch_1')(x)
+    x = LeakyReLU(name='block_' + block_id + '_identity_leakyrelu_1')(x)
+    
+    x = grouped_block(x, f2, cardinality, block_id)
+    x = BatchNormalization(name='block_' + block_id + '_identity_batch_2')(x)
+    x = Activation('relu',name='block_' + block_id + '_identity_relu_2')(x)
+    
+    x = Conv2D(f3, kernel_size=(1,1), use_bias=False, kernel_initializer='he_normal', name='block_' + block_id + '_identity_conv2d_3')(x)
+    x = BatchNormalization(name='block_' + block_id + '_identity_batch_3')(x)
+    
+    x = Add(name='block_' + block_id + '_add')([x, inputs])
+    x = LeakyReLU(name='block_' + block_id + '_identity_leakyrelu_relu_3')(x)
+    
+    return x
+
+############################################################################################
 # Fusion Layer
 ############################################################################################
 class FusionLayer(Layer):
@@ -318,79 +405,75 @@ class FusionLayer(Layer):
         return input_shape
 
 ############################################################################################
-# ResNet Identity Block
-############################################################################################
-def identity_block(inputs, filters, block_id):
+# ST-ResNet Version 1
+############################################################################################    
+def STResNet(c_conf=(32, 32, 2, 3), p_conf=(32, 32, 2, 3), t_conf=(32, 32, 2, 3), external_dim=None, res_units=3 ,ver='v1'): 
     
-    x = BatchNormalization(name='block_' + block_id + '_identity_batch_1')(inputs)
-    x = Activation('relu', name='block_' + block_id + '_identity_relu_1')(x)
-    x = Conv2D(filters, kernel_size=(3,3), strides=(1,1), padding='same', kernel_initializer='he_normal', name='block_' + block_id + '_identity_conv2d_1')(x)
-
-    x = BatchNormalization(name='block_' + block_id + '_identity_batch_2')(x)
-    x = Activation('relu',name='block_' + block_id + '_identity_relu_2')(x)
-    x = Conv2D(filters, kernel_size=(3,3), strides=(1,1), padding='same', kernel_initializer='he_normal', name='block_' + block_id + '_identity_conv2d_2')(x)
+    # main input
+    main_inputs = []
+    outputs = []
     
-    x = Add(name='block_' + block_id + '_add')([inputs,x])
-
-    return x
-
-############################################################################################
-# Spatial Time Residual Network ST-ResNet
-############################################################################################
-
-map_height = 16
-map_width = 8
-n_flows = 2
-    
-c_conf=(map_height, map_width, n_flows, closeness_len) # closeness
-p_conf=(map_height, map_width, n_flows, period_len) # period
-t_conf=(map_height, map_width, n_flows, trend_len) # trend
-
-# main input
-main_inputs = []
-outputs = []
-
-for conf, name in zip([c_conf, p_conf, t_conf],['c','p','t']):
-    
-    map_height, map_width, n_flows, len_seq = conf
-    
-    Image = Input(shape=(map_height, map_width, n_flows * len_seq), name='input_' + name)
-    
-    main_inputs.append(Image)
-    
-    x = Conv2D(64, kernel_size=(3,3), padding="same")(Image)
-    x = identity_block(x, 64, block_id='0_' + name)
-    x = identity_block(x, 64, block_id='1_' + name)
-    x = identity_block(x, 64, block_id='2_' + name)
-    
-    x = Activation('relu')(x)        
-    x = Conv2D(n_flows, kernel_size=(3,3), padding="same")(x)
-    
-    output = FusionLayer(name="fusion_layer_" + name)(x)
-    
-    outputs.append(output)
+    #########################################################################
+    # ResNet Temporal Block
+    #########################################################################
+    for conf, name in zip([c_conf, p_conf, t_conf],['c','p','t']):
         
-# External component
-external_dim = 8 # One Hot Encoded Timestamp into [weekday , weekend/notweekend]
-
-# Concatenate external inputs with temporal inputs
-external_input = Input(shape=(external_dim,), name='external_input')   
-main_inputs.append(external_input)
-
-embedding = Dense(10, name='external_dense_1')(external_input)
-embedding = Activation('relu')(embedding)
-embedding = Dense(n_flows * map_height * map_width)(embedding)
-embedding = Activation('relu')(embedding)
-external_output = Reshape((map_height, map_width, n_flows),name='external_output')(embedding)
-
-# Fuse all layers
-fusion_temporal =  Add(name= 'FusionTemporal')(outputs)
-
-fusion = Add(name='Fusion')([fusion_temporal,external_output])
-
-final_output = Activation('tanh', name='Tanh')(fusion) 
-
-model = Model(inputs=main_inputs,outputs=final_output)
+        map_height, map_width, n_flows, len_seq = conf
+        
+        Image = Input(shape=(map_height, map_width, n_flows * len_seq), name='input_' + name)
+        
+        main_inputs.append(Image)
+        
+        x = Conv2D(64, kernel_size=(3,3), padding="same")(Image)
+        
+        for i in range(res_units):
+        
+            if ver == 'v1':
+                
+                x = identity_block(x, 64, block_id= str(i) +'_' + name)
+                
+            elif ver == 'v2':
+                
+                x = bottleneck_block(x, kernel_size=(3,3), filters= [64, 128, 64], block_id= str(i) +'_' + name)
+                
+            else:
+                
+                x = resnetXt_block(x, filters= [64, 64, 64], cardinality=32, block_id= str(i) +'_' + name)
+        
+        x = Activation('relu')(x)        
+        x = Conv2D(n_flows, kernel_size=(3,3), padding="same")(x)
+        
+        output = FusionLayer(name="fusion_layer_" + name)(x)
+        
+        outputs.append(output)
+        
+    # Fuse all layers
+    fusion = Add(name= 'FusionTemporal')(outputs)
+    
+    #########################################################################
+    # External Block
+    #########################################################################
+    if external_dim != None and external_dim > 0:
+    
+        # Concatenate external inputs with temporal inputs
+        external_input = Input(shape=(external_dim,), name='external_input') 
+        
+        main_inputs.append(external_input)
+        
+        embedding = Dense(10, name='external_dense_1')(external_input)
+        embedding = Activation('relu')(embedding)
+        embedding = Dense(n_flows * map_height * map_width)(embedding)
+        embedding = Activation('relu')(embedding)
+        external_output = Reshape((map_height, map_width, n_flows),name='external_output')(embedding)
+        
+        # Fuse with external output
+        fusion = Add(name='Fusion')([fusion,external_output])
+    
+    final_output = Activation('tanh', name='Tanh')(fusion) 
+    
+    model = Model(inputs=main_inputs,outputs=final_output)
+    
+    return model
 
 ############################################################################################
 # Training pipeline
@@ -425,7 +508,19 @@ csv_logger = CSVLogger(filename='nyc_bike_flow.csv',separator=',', append=True)
 # Create Optimizer
 optimizer = Adam(lr=learning_rate, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
 
+map_height = 16
+map_width = 8
+n_flows = 2
+    
+c_conf=(map_height, map_width, n_flows, closeness_len) # closeness
+p_conf=(map_height, map_width, n_flows, period_len) # period
+t_conf=(map_height, map_width, n_flows, trend_len) # trend
+
+external_dim = 8
+
 # Compile model for training
+model = STResNet(c_conf,p_conf,t_conf,external_dim, ver='v1')
+
 model.compile(optimizer, loss='mse' , metrics=[rmse])
 model.summary()
 
@@ -453,7 +548,7 @@ for i in range(n_samples):
     f.set_figheight(6)
     
     # randomly select a sample
-    idx = np.random.randint(0, len(X_test))
+    idx = np.random.randint(0, len(X_test[0]))
     
     # Add single dimension to each input to simulate batch
     X = [X_test[0][idx][np.newaxis,...],X_test[1][idx][np.newaxis,...],X_test[2][idx][np.newaxis,...],X_test[3][idx][np.newaxis,...]]
@@ -462,6 +557,8 @@ for i in range(n_samples):
     # Predict values using our trained model
     y_pred = model.predict(X)
     y_pred = np.squeeze(y_pred)
+    
+    date = 
     
     hmax1 = sns.heatmap(y_true[:,:,0], cmap = matplotlib.cm.winter, alpha = 0.3, annot = False,zorder = 2, ax=ax1)
     hmax1.imshow(nyc_map,aspect = hmax1.get_aspect(),extent = hmax1.get_xlim() + hmax1.get_ylim(), zorder = 1) 
