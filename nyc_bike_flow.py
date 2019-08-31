@@ -303,7 +303,7 @@ print("X Test size: ", len(X_test))
 ############################################################################################
 
 ############################################################################################
-# ResNet Identity block
+# ResNet Identity Block
 ############################################################################################
 def identity_block(inputs, filters, block_id):
     
@@ -386,69 +386,72 @@ def resnetXt_block(inputs, filters, cardinality, block_id):
     return x
 
 ############################################################################################
-# Fusion Layer
+# Fusion Block
 ############################################################################################
 class FusionLayer(Layer):
 
     def __init__(self, **kwargs):
         super(FusionLayer, self).__init__(**kwargs)
-
+        
     def build(self, input_shape):
-        initial_weight_value = np.random.random(input_shape[1:])
-        self.W = K.variable(initial_weight_value)
-        self.trainable_weights = [self.W]
+        # Create a trainable weight variable for this layer.
+        self.kernel = self.add_weight(name='kernel', 
+                                      shape=(input_shape[1:]),
+                                      initializer='uniform',
+                                      trainable=True)
+        
+        super(FusionLayer, self).build(input_shape)  # Be sure to call this at the end
 
     def call(self, x, mask=None):
-        return x * self.W
+        return x * self.kernel
     
     def get_output_shape_for(self, input_shape):
         return input_shape
-
+    
 ############################################################################################
-# ST-ResNet Version 1
-############################################################################################    
-def STResNet(c_conf=(32, 32, 2, 3), p_conf=(32, 32, 2, 3), t_conf=(32, 32, 2, 3), external_dim=None, res_units=3 ,ver='v1'): 
+# ST-ResNet version 1
+############################################################################################
+def STResNet_v1(c_conf=(32, 32, 2, 3), 
+                p_conf=(32, 32, 2, 3), 
+                t_conf=(32, 32, 2, 3), 
+                output_shape = (32, 32, 2), 
+                res_units=3, 
+                external_dim = None):
     
-    # main input
+    height, width, n_flows = output_shape
+    
     main_inputs = []
-    outputs = []
+
+    Input_c = Input(shape=(c_conf[0], c_conf[1], c_conf[2] * c_conf[3]), name='input_c')
+    Input_p = Input(shape=(p_conf[0], p_conf[1], p_conf[2] * p_conf[3]), name='input_p')
+    Input_t = Input(shape=(t_conf[0], t_conf[1], t_conf[2] * t_conf[3]), name='input_t')
     
-    #########################################################################
-    # ResNet Temporal Block
-    #########################################################################
-    for conf, name in zip([c_conf, p_conf, t_conf],['c','p','t']):
+    main_inputs.append(Input_c)
+    main_inputs.append(Input_p)
+    main_inputs.append(Input_t)
+
+    # Input
+    
+    x_c = Conv2D(64, kernel_size=(3,3),strides=(1,1), padding="same", name= 'conv_input_c')(Input_c)
+    x_p = Conv2D(64, kernel_size=(3,3),strides=(1,1), padding="same", name= 'conv_input_p')(Input_p)
+    x_t = Conv2D(64, kernel_size=(3,3),strides=(1,1), padding="same", name= 'conv_input_t')(Input_t)
+    
+    for i in range(res_units):
         
-        map_height, map_width, n_flows, len_seq = conf
+        x_c = identity_block(x_c, 64, block_id= str(i) +'_c')
+        x_p = identity_block(x_p, 64, block_id= str(i) +'_p')
+        x_t = identity_block(x_t, 64, block_id= str(i) +'_t')
         
-        Image = Input(shape=(map_height, map_width, n_flows * len_seq), name='input_' + name)
-        
-        main_inputs.append(Image)
-        
-        x = Conv2D(64, kernel_size=(3,3), padding="same")(Image)
-        
-        for i in range(res_units):
-        
-            if ver == 'v1':
-                
-                x = identity_block(x, 64, block_id= str(i) +'_' + name)
-                
-            elif ver == 'v2':
-                
-                x = bottleneck_block(x, kernel_size=(3,3), filters= [64, 128, 64], block_id= str(i) +'_' + name)
-                
-            else:
-                
-                x = resnetXt_block(x, filters= [64, 64, 64], cardinality=32, block_id= str(i) +'_' + name)
-        
-        x = Activation('relu')(x)        
-        x = Conv2D(n_flows, kernel_size=(3,3), padding="same")(x)
-        
-        output = FusionLayer(name="fusion_layer_" + name)(x)
-        
-        outputs.append(output)
-        
-    # Fuse all layers
-    fusion = Add(name= 'FusionTemporal')(outputs)
+    x_c = Conv2D(1, kernel_size=(3,3),strides=(1,1), padding="same", name= 'conv_output_c')(x_c)
+    x_p = Conv2D(1, kernel_size=(3,3),strides=(1,1), padding="same", name= 'conv_output__p')(x_p)
+    x_t = Conv2D(1, kernel_size=(3,3),strides=(1,1), padding="same", name= 'conv_output__t')(x_t)
+    
+    # Fusion Layers
+    x_c = FusionLayer()(x_c)
+    x_p = FusionLayer()(x_p)
+    x_t = FusionLayer()(x_t)
+    
+    fusion = Add(name='temporal_fusion')([x_c,x_p,x_t])
     
     #########################################################################
     # External Block
@@ -459,16 +462,16 @@ def STResNet(c_conf=(32, 32, 2, 3), p_conf=(32, 32, 2, 3), t_conf=(32, 32, 2, 3)
         external_input = Input(shape=(external_dim,), name='external_input') 
         
         main_inputs.append(external_input)
-        
+
         embedding = Dense(10, name='external_dense_1')(external_input)
         embedding = Activation('relu')(embedding)
-        embedding = Dense(n_flows * map_height * map_width)(embedding)
+        embedding = Dense(height * width * n_flows* channels)(embedding)
         embedding = Activation('relu')(embedding)
-        external_output = Reshape((map_height, map_width, n_flows),name='external_output')(embedding)
+        external_output = Reshape((height, width, n_flows ) ,name='external_output')(embedding)
         
         # Fuse with external output
-        fusion = Add(name='Fusion')([fusion,external_output])
-    
+        fusion = Add(name='external_fusion')([fusion,external_output])
+        
     final_output = Activation('tanh', name='Tanh')(fusion) 
     
     model = Model(inputs=main_inputs,outputs=final_output)
@@ -484,17 +487,15 @@ def rmse(y_true, y_pred):
     return K.mean(K.square(y_pred - y_true)) ** 0.5
 
 # Hyperparameters
-epochs = 100
+epochs = 500
 batch_size = 32
 learning_rate = 0.0002
-weight_decay = 5e-4
-momentum = .9
 
 # callbacks
 model_path = 'saved_models'
 
 # File were the best model will be saved during checkpoint     
-model_file = os.path.join(model_path,'nyc_bike_flow-{val_loss:.4f}.h5')
+model_file = os.path.join(model_path,'nyc_bike_flow.h5')
 
 # Early stop to avoid overfitting our model
 early_stopping = EarlyStopping(monitor='val_rmse', patience=5, mode='min')
@@ -502,12 +503,7 @@ early_stopping = EarlyStopping(monitor='val_rmse', patience=5, mode='min')
 # Check point for saving the best model
 check_pointer = ModelCheckpoint(model_file, monitor='val_rmse', mode='min',verbose=1, save_best_only=True)
 
-# Logger to store loss on a csv file
-csv_logger = CSVLogger(filename='nyc_bike_flow.csv',separator=',', append=True)
-
-# Create Optimizer
-optimizer = Adam(lr=learning_rate, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
-
+# Heatmap parameters
 map_height = 16
 map_width = 8
 n_flows = 2
@@ -515,11 +511,15 @@ n_flows = 2
 c_conf=(map_height, map_width, n_flows, closeness_len) # closeness
 p_conf=(map_height, map_width, n_flows, period_len) # period
 t_conf=(map_height, map_width, n_flows, trend_len) # trend
+output_shape=(map_height, map_width, n_flows)
 
 external_dim = 8
 
-# Compile model for training
-model = STResNet(c_conf,p_conf,t_conf,external_dim, ver='v1')
+# Create ST-ResNet Model
+model = STResNet_v1(c_conf,p_conf,t_conf, output_shape, res_units=3, external_dim = external_dim,unit_type = 'v2')
+
+# Create Optimizer
+optimizer = Adam(lr=learning_rate)
 
 model.compile(optimizer, loss='mse' , metrics=[rmse])
 model.summary()
@@ -529,7 +529,7 @@ history = model.fit(X_train, Y_train,
                     epochs=epochs,
                     batch_size=batch_size,
                     validation_split=0.1,
-                    callbacks=[early_stopping, check_pointer, csv_logger],
+                    callbacks=[check_pointer,early_stopping],
                     verbose=1)
 
 ############################################################################################
